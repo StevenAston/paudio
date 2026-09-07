@@ -12,3 +12,4 @@ transcripts/
 *.tmp
 .env
 app/.env
+app/src/generated

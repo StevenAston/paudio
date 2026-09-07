@@ -22,6 +22,7 @@ COPY requirements.txt .
 RUN python3 -m venv .venv
 ENV PATH="/paudio/.venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
+RUN pip uninstall -y torchcodec
 
 # Install Node dependencies
 COPY app/package.json app/package-lock.json ./app/
