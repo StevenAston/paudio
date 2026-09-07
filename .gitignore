@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+app/node_modules/
+app/.next/
+audio/
+transcripts/
+*.db
+*.log
+.claude/
+.agents/
+*.tmp
+.env
+app/.env

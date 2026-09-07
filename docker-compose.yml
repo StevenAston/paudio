@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  paudio:
+    build: .
+    container_name: paudio
+    ports:
+      - "5600:5600"
+    volumes:
+      # Mount the database, audio, and transcripts so they persist
+      - ./paudio.db:/paudio/paudio.db
+      - ./audio:/paudio/audio
+      - ./transcripts:/paudio/transcripts
+      # Optionally mount .env if you want to configure it without rebuilding
+      - ./app/.env:/paudio/app/.env
+    environment:
+      # Ensure HuggingFace cache is stored in the container
+      - HF_HOME=/paudio/.cache/huggingface
+    # Enable NVIDIA GPU for fast transcription
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

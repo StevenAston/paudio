@@ -1,0 +1,75 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Settings {
+  id                   String   @id @default("global") // Enforce singleton
+  namingTemplate       String   @default("{podcast_title} - {episode_number}")
+  transcriptionEngine  String   @default("insanely-fast-whisper") // "insanely-fast-whisper" or "whisperx"
+  transcriptionModel   String   @default("openai/whisper-large-v3-turbo")
+  downloadThreads      Int      @default(1)
+  transcribeThreads    Int      @default(1)
+  gpuCount             Int      @default(1)
+  downloadsPaused      Boolean  @default(false)
+  transcriptionsPaused Boolean  @default(false)
+  batchSize            Int      @default(4)
+  beamSize             Int      @default(5)
+  convertToOpus        Boolean  @default(false)
+  maxSpeakers          Int      @default(4)
+  diarizationModel     String   @default("pyannote/speaker-diarization-3.1")
+  diarizationEmbeddingBatchSize    Int      @default(1)
+  diarizationSegmentationBatchSize Int      @default(1)
+  updatedAt            DateTime @updatedAt
+}
+
+model Podcast {
+  id             String    @id @default(uuid())
+  title          String
+  customTitle    String?
+  description    String?
+  feedUrl        String    @unique
+  coverImageUrl  String?
+  namingTemplate String?   // Stretch goal: regex/wildcard per podcast
+  episodes       Episode[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model Episode {
+  id                  String    @id @default(uuid())
+  guid                String    @unique
+  episodeNumber       String?
+  title               String
+  duration            Int?      // in seconds
+  audioUrl            String
+  publishDate         DateTime?
+  podcastId           String
+  podcast             Podcast   @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  downloadStatus      String    @default("UNPROCESSED") // UNPROCESSED, PENDING, DOWNLOADING, DOWNLOADED, ERROR
+  transcribeStatus    String    @default("UNPROCESSED") // UNPROCESSED, PENDING, TRANSCRIBING, TRANSCRIBED, ERROR
+  localAudioPath      String?
+  localTranscriptPath String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  jobQueue            JobQueue?
+}
+
+model JobQueue {
+  id           String   @id @default(uuid())
+  episodeId    String   @unique
+  episode      Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  status       String   @default("PENDING") // PENDING, IN_PROGRESS, PAUSED, COMPLETED, ERROR
+  errorMessage String?  // Store python/spawn errors directly in DB
+  progress     Float    @default(0.0) // 0 to 100
+  type         String   // DOWNLOAD_AND_TRANSCRIBE
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
