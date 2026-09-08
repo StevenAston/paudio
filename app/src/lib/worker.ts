@@ -390,8 +390,9 @@ export async function processNextTranscription(workerIndex: number = 0) {
     try {
       if (fs.existsSync(transcriptPath)) {
         const transcriptData = JSON.parse(fs.readFileSync(transcriptPath, 'utf8'))
-        let mdContent = `# Transcript: ${job.episode.title}\n\n`
-        let txtContent = ""
+        const generationTime = new Date().toLocaleString()
+        let mdContent = `# Transcript: ${job.episode.title}\n*Generated on: ${generationTime}*\n\n`
+        let txtContent = `Transcript: ${job.episode.title}\nGenerated on: ${generationTime}\n\n`
         
         const segments = transcriptData.segments || transcriptData.chunks || []
         

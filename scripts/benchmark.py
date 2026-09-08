@@ -10,11 +10,14 @@ def get_audio_for_duration(duration_minutes):
     
     try:
         import datasets
+        datasets.config.TORCHCODEC_AVAILABLE = False
         import soundfile as sf
         import numpy as np
     except ImportError:
         print("Installing required packages (datasets, soundfile, librosa)...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "datasets", "soundfile", "librosa"])
+        import datasets
+        datasets.config.TORCHCODEC_AVAILABLE = False
         from datasets import load_dataset
         import soundfile as sf
         import numpy as np
