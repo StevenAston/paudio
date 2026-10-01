@@ -13,3 +13,4 @@ transcripts/
 .env
 app/.env
 app/src/generated
+*.tar

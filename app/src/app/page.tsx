@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef } from "react"
 import { Play, Pause, Trash2, Plus, RefreshCw, Headphones, Mic, Settings, Settings2, Loader2, Wrench, BookOpen, X, Power } from "lucide-react"
+import dynamic from "next/dynamic"
+
+const SnipModal = dynamic(() => import('../components/SnipModal'), { ssr: false })
 
 export default function App() {
   const getStatusColor = (status: string) => {
@@ -35,12 +38,20 @@ export default function App() {
   const [newFeedUrl, setNewFeedUrl] = useState("")
   const [addingFeed, setAddingFeed] = useState(false)
   
+  const [isTubioMode, setIsTubioMode] = useState(false)
+  const [trackModalEpisode, setTrackModalEpisode] = useState<any>(null)
+  const [availableTracks, setAvailableTracks] = useState<{audioFormats: any[], subtitles: any[]} | null>(null)
+  const [isLoadingTracks, setIsLoadingTracks] = useState(false)
+  const [selectedAudioFormat, setSelectedAudioFormat] = useState<string>("")
+  const [selectedSubtitleFormat, setSelectedSubtitleFormat] = useState<string>("")
+
+  // Snip Modal State
+  const [snipEpisode, setSnipEpisode] = useState<any>(null)
+
   // Transcript Modal State
   const [transcriptModalEpisode, setTranscriptModalEpisode] = useState<any>(null)
   const [transcriptData, setTranscriptData] = useState<any>(null)
   const [isLoadingTranscript, setIsLoadingTranscript] = useState(false)
-
-
   // Settings modals state
   const [showGlobalSettings, setShowGlobalSettings] = useState(false)
   const [globalSettings, setGlobalSettings] = useState<any>({ 
@@ -337,12 +348,12 @@ export default function App() {
     setSelectedEpisodes(newSet)
   }
 
-  const handleEnqueue = async () => {
+  const handleEnqueue = async (type: string = "DOWNLOAD_AND_TRANSCRIBE") => {
     if (selectedEpisodes.size === 0) return
     const ids = Array.from(selectedEpisodes)
     const res = await fetch("/api/queue", {
       method: "POST",
-      body: JSON.stringify({ episodeIds: ids }),
+      body: JSON.stringify({ episodeIds: ids, type }),
       headers: { "Content-Type": "application/json" }
     })
     if (res.ok) {
@@ -350,6 +361,33 @@ export default function App() {
       fetchQueue()
       // Kick off worker
       fetch("/api/worker", { method: "POST" })
+    }
+  }
+
+  const handleClearEpisodes = async () => {
+    if (selectedEpisodes.size === 0) return
+    const isMultiple = selectedEpisodes.size > 1
+    const message = isMultiple 
+      ? `Are you sure you want to delete all downloaded files and transcripts for ${selectedEpisodes.size} episodes?` 
+      : `Are you sure you want to delete all downloaded files and transcripts for this episode?`
+      
+    if (!window.confirm(message)) return
+    
+    const ids = Array.from(selectedEpisodes)
+    const res = await fetch("/api/episodes/clear", {
+      method: "POST",
+      body: JSON.stringify({ episodeIds: ids }),
+      headers: { "Content-Type": "application/json" }
+    })
+    
+    if (res.ok) {
+      setSelectedEpisodes(new Set())
+      if (selectedPodcastId) {
+        fetchEpisodes(selectedPodcastId)
+      }
+      fetchQueue()
+    } else {
+      alert("Failed to clear episodes")
     }
   }
 
@@ -401,8 +439,92 @@ export default function App() {
     }
   }
 
+  const openTrackModal = async (ep: any) => {
+    setTrackModalEpisode(ep)
+    setIsLoadingTracks(true)
+    setAvailableTracks(null)
+    setSelectedAudioFormat("")
+    setSelectedSubtitleFormat("")
+    
+    try {
+      const res = await fetch(`/api/youtube/tracks?videoId=${ep.youtubeVideoId}`)
+      if (res.ok) {
+        const data = await res.json()
+        setAvailableTracks(data)
+        if (data.audioFormats && data.audioFormats.length > 0) {
+          setSelectedAudioFormat(data.audioFormats[0].format_id)
+        }
+      } else {
+        alert("Failed to load tracks")
+        setTrackModalEpisode(null)
+      }
+    } catch(e) {
+      alert("Error loading tracks")
+      setTrackModalEpisode(null)
+    } finally {
+      setIsLoadingTracks(false)
+    }
+  }
+
+  const confirmTrackSelection = async () => {
+    if (!trackModalEpisode) return
+    
+    try {
+      // We need an endpoint to patch the episode formats. Wait, we don't have one! Let's do a generic PATCH or just do it in queue/enqueue
+      // Wait, let's create a quick API fetch to patch it or pass formats in the enqueue request.
+      // Since we just need to update it, we can hit `/api/episodes/[id]` ... wait, does that exist?
+      // Let's just create a quick patch endpoint or include it when we queue.
+      // It's easier to hit a PATCH to `/api/episodes/[id]`. I will need to create that route.
+      
+      const res = await fetch(`/api/episodes/${trackModalEpisode.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          youtubeAudioFormatId: selectedAudioFormat,
+          youtubeSubtitleFormatId: selectedSubtitleFormat || null
+        }),
+        headers: { "Content-Type": "application/json" }
+      })
+      
+      if (res.ok) {
+        // Automatically select this episode
+        const newSet = new Set(selectedEpisodes)
+        newSet.add(trackModalEpisode.id)
+        setSelectedEpisodes(newSet)
+        
+        setTrackModalEpisode(null)
+        fetchEpisodes(selectedPodcastId!)
+      } else {
+        alert("Failed to save track selection")
+      }
+    } catch(e) {
+      alert("Error saving track selection")
+    }
+  }
+
+  const displayedPodcasts = podcasts.filter(p => isTubioMode ? p.sourceType === "YOUTUBE" : p.sourceType !== "YOUTUBE")
+  
+  // Sort episodes: pinned first, then by publishDate descending
+  const sortedEpisodes = [...episodes].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    const dateA = a.publishDate ? new Date(a.publishDate).getTime() : 0
+    const dateB = b.publishDate ? new Date(b.publishDate).getTime() : 0
+    return dateB - dateA
+  })
+
   return (
     <div className="flex h-screen w-full bg-slate-950 text-slate-300 font-sans relative">
+      {/* Snip Modal */}
+      {snipEpisode && (
+        <SnipModal 
+          episode={snipEpisode} 
+          onClose={() => setSnipEpisode(null)} 
+          onComplete={() => {
+            setSnipEpisode(null)
+            fetchEpisodes(selectedPodcastId!)
+          }} 
+        />
+      )}
+
       {/* Transcript Modal */}
       {transcriptModalEpisode && (
         <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
@@ -450,6 +572,113 @@ export default function App() {
                   Failed to load transcript data.
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Track Selection Modal */}
+      {trackModalEpisode && (
+        <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-lg p-6 w-[600px] max-w-full h-[70vh] shadow-xl flex flex-col relative">
+            <h2 className="text-xl font-bold text-white mb-4 pr-8 truncate">
+              {trackModalEpisode.title}
+            </h2>
+            <button 
+              onClick={() => setTrackModalEpisode(null)}
+              className="absolute top-6 right-6 text-slate-400 hover:text-white"
+            >
+              <X size={24} />
+            </button>
+            
+            <div className="flex-1 overflow-y-auto bg-slate-950 rounded border border-slate-800 p-4">
+              {isLoadingTracks ? (
+                <div className="h-full flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                </div>
+              ) : availableTracks ? (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white mb-3">Audio Track</h3>
+                    <div className="space-y-2">
+                      {availableTracks.audioFormats.map((f: any) => (
+                        <label key={f.format_id} className="flex items-center gap-3 p-2 hover:bg-slate-900/50 rounded cursor-pointer border border-transparent hover:border-slate-800">
+                          <input 
+                            type="radio" 
+                            name="audio_format" 
+                            value={f.format_id} 
+                            checked={selectedAudioFormat === f.format_id}
+                            onChange={() => setSelectedAudioFormat(f.format_id)}
+                            className="text-indigo-500 focus:ring-indigo-500"
+                          />
+                          <span className="text-sm flex-1">
+                            {f.format_note || 'Audio'} ({f.ext}, {f.acodec})
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            {f.filesize ? (f.filesize / 1024 / 1024).toFixed(1) + ' MB' : ''} {f.abr ? f.abr + 'k' : ''}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-lg font-semibold text-white mb-3 flex justify-between items-center">
+                      Subtitle Track (Optional)
+                      <button 
+                        onClick={() => setSelectedSubtitleFormat("")}
+                        className="text-xs text-slate-500 hover:text-slate-300"
+                      >
+                        Clear
+                      </button>
+                    </h3>
+                    <div className="space-y-2">
+                      {availableTracks.subtitles.length === 0 ? (
+                        <div className="text-sm text-slate-500 p-2">No subtitles available</div>
+                      ) : (
+                        availableTracks.subtitles.map((sub: any, i: number) => (
+                          <label key={i} className="flex items-center gap-3 p-2 hover:bg-slate-900/50 rounded cursor-pointer border border-transparent hover:border-slate-800">
+                            <input 
+                              type="radio" 
+                              name="subtitle_format" 
+                              value={sub.lang} 
+                              checked={selectedSubtitleFormat === sub.lang}
+                              onChange={() => setSelectedSubtitleFormat(sub.lang)}
+                              className="text-indigo-500 focus:ring-indigo-500"
+                            />
+                            <span className="text-sm flex-1">
+                              {sub.name}
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              {sub.ext}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-red-400 text-center mt-10">
+                  Failed to load tracks.
+                </div>
+              )}
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-4 shrink-0">
+              <button 
+                onClick={() => setTrackModalEpisode(null)} 
+                className="px-4 py-2 rounded text-slate-400 hover:text-white bg-slate-800 border border-slate-700"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmTrackSelection} 
+                disabled={isLoadingTracks || !selectedAudioFormat}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded font-medium"
+              >
+                Confirm
+              </button>
             </div>
           </div>
         </div>
@@ -836,8 +1065,24 @@ export default function App() {
         <div className="p-4 border-b border-slate-800">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <Headphones className="w-6 h-6 text-indigo-400" />
-              paudio
+              {isTubioMode ? (
+                <Play className="w-6 h-6 text-red-500" fill="currentColor" />
+              ) : (
+                <Headphones className="w-6 h-6 text-indigo-400" />
+              )}
+              {isTubioMode ? "Tubio" : "paudio"}
+              <button 
+                onClick={() => {
+                  setIsTubioMode(!isTubioMode)
+                  setSelectedPodcastId(null)
+                  setEpisodes([])
+                  setSelectedEpisodes(new Set())
+                }}
+                className="ml-2 text-slate-500 hover:text-slate-300 transition-colors"
+                title={`Switch to ${isTubioMode ? 'paudio' : 'Tubio'}`}
+              >
+                ↻
+              </button>
             </h1>
             <button
               onClick={() => {
@@ -845,7 +1090,7 @@ export default function App() {
                 setShowShutdownModal(true)
               }}
               className={`p-1.5 rounded transition-colors ${powerOn ? 'text-red-500' : 'text-slate-600 hover:text-slate-400'}`}
-              title="Shut down paudio"
+              title="Shut down"
             >
               <Power className="w-5 h-5" />
             </button>
@@ -853,7 +1098,7 @@ export default function App() {
           <form onSubmit={handleAddFeed} className="mt-4 flex gap-2">
             <input 
               type="url" 
-              placeholder="RSS Feed URL..." 
+              placeholder={isTubioMode ? "YouTube URL..." : "RSS Feed URL..."}
               value={newFeedUrl}
               onChange={e => setNewFeedUrl(e.target.value)}
               className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
@@ -861,7 +1106,7 @@ export default function App() {
             <button 
               type="submit" 
               disabled={addingFeed}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded disabled:opacity-50"
+              className={`${isTubioMode ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white p-2 rounded disabled:opacity-50`}
             >
               {addingFeed ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             </button>
@@ -869,22 +1114,22 @@ export default function App() {
         </div>
         
         <div className="flex-1 overflow-y-auto mb-16">
-          {podcasts.map(pod => (
+          {displayedPodcasts.map(pod => (
             <button
               key={pod.id}
               onClick={() => setSelectedPodcastId(pod.id)}
-              className={`w-full text-left p-4 border-b border-slate-800/50 hover:bg-slate-800/50 transition-colors flex items-center gap-3 ${selectedPodcastId === pod.id ? 'bg-slate-800 border-l-4 border-l-indigo-500' : ''}`}
+              className={`w-full text-left p-4 border-b border-slate-800/50 hover:bg-slate-800/50 transition-colors flex items-center gap-3 ${selectedPodcastId === pod.id ? (isTubioMode ? 'bg-slate-800 border-l-4 border-l-red-500' : 'bg-slate-800 border-l-4 border-l-indigo-500') : ''}`}
             >
               {pod.coverImageUrl ? (
                 <img src={pod.coverImageUrl} alt="" className="w-10 h-10 rounded bg-slate-800 object-cover" />
               ) : (
                 <div className="w-10 h-10 rounded bg-slate-800 flex items-center justify-center">
-                  <Mic className="w-5 h-5 text-slate-500" />
+                  {isTubioMode ? <Play className="w-5 h-5 text-slate-500" /> : <Mic className="w-5 h-5 text-slate-500" />}
                 </div>
               )}
               <div className="flex-1 overflow-hidden">
                 <div className="font-medium text-white truncate">{pod.customTitle || pod.title}</div>
-                <div className="text-xs text-slate-500">{pod._count?.episodes || 0} episodes</div>
+                <div className="text-xs text-slate-500">{pod._count?.episodes || 0} {isTubioMode ? 'videos' : 'episodes'}</div>
               </div>
             </button>
           ))}
@@ -939,13 +1184,41 @@ export default function App() {
                 >
                   <Settings2 size={20} />
                 </button>
-                <button 
-                  onClick={handleEnqueue}
+                <div className="flex bg-indigo-600 rounded shadow-sm">
+                  <button 
+                    onClick={() => handleEnqueue("DOWNLOAD_AND_TRANSCRIBE")}
+                    disabled={selectedEpisodes.size === 0}
+                    className="hover:bg-indigo-700 text-white px-3 py-1.5 rounded-l font-medium transition-colors disabled:opacity-50 text-sm flex items-center gap-1.5"
+                    title="Download & Transcribe"
+                  >
+                    <Play size={14} fill="currentColor" /> All
+                  </button>
+                  <div className="w-px bg-indigo-800 shrink-0"></div>
+                  <button 
+                    onClick={() => handleEnqueue("DOWNLOAD_ONLY")}
+                    disabled={selectedEpisodes.size === 0}
+                    className="hover:bg-indigo-700 text-white px-3 py-1.5 font-medium transition-colors disabled:opacity-50 text-sm"
+                    title="Download Only"
+                  >
+                    DL
+                  </button>
+                  <div className="w-px bg-indigo-800 shrink-0"></div>
+                  <button 
+                    onClick={() => handleEnqueue("TRANSCRIBE_ONLY")}
+                    disabled={selectedEpisodes.size === 0}
+                    className="hover:bg-indigo-700 text-white px-3 py-1.5 rounded-r font-medium transition-colors disabled:opacity-50 text-sm flex items-center"
+                    title="Transcribe Only"
+                  >
+                    <Mic size={14} />
+                  </button>
+                </div>
+                <button
+                  onClick={handleClearEpisodes}
                   disabled={selectedEpisodes.size === 0}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded font-medium transition-colors disabled:opacity-50"
-                  title="Download & Transcribe"
+                  className="p-1.5 bg-red-900/50 text-red-400 rounded hover:bg-red-900 hover:text-white transition-colors border border-red-900/50 disabled:opacity-50"
+                  title="Clear Files & Data"
                 >
-                  ▶
+                  <Trash2 size={20} />
                 </button>
               </>
             )}
@@ -995,8 +1268,8 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {episodes.map((ep, idx) => (
-                  <tr key={ep.id} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
+                {sortedEpisodes.map((ep, idx) => (
+                  <tr key={ep.id} className={`border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors ${ep.pinned ? 'bg-indigo-950/20' : ''}`}>
                     <td className="p-3 text-center">
                       <input 
                         type="checkbox" 
@@ -1010,8 +1283,8 @@ export default function App() {
                             const start = Math.min(lastSelectedIndex, idx)
                             const end = Math.max(lastSelectedIndex, idx)
                             for (let i = start; i <= end; i++) {
-                              if (isChecking) newSet.add(episodes[i].id)
-                              else newSet.delete(episodes[i].id)
+                              if (isChecking) newSet.add(sortedEpisodes[i].id)
+                              else newSet.delete(sortedEpisodes[i].id)
                             }
                           } else {
                             if (isChecking) newSet.add(ep.id)
@@ -1047,11 +1320,30 @@ export default function App() {
                             <BookOpen size={16} />
                           </button>
                         )}
+                        {['DOWNLOADED', 'COMPLETED', 'TRANSCRIBED'].includes(ep.downloadStatus) && (
+                          <button
+                            onClick={() => setSnipEpisode(ep)}
+                            className="text-slate-400 hover:text-indigo-400 transition-colors ml-1 text-sm"
+                            title="Snip Audio"
+                          >
+                            ✂️
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td className="p-3 text-white">
                       {ep.episodeNumber && <span className="text-slate-500 mr-2">Ep {ep.episodeNumber}</span>}
-                      {ep.title}
+                      {ep.pinned && <span className="text-amber-500 mr-2 text-xs font-bold" title="Pinned specifically requested video">★</span>}
+                      {isTubioMode ? (
+                        <button 
+                          onClick={() => openTrackModal(ep)}
+                          className="text-left hover:text-red-400 transition-colors"
+                        >
+                          {ep.title}
+                        </button>
+                      ) : (
+                        <span>{ep.title}</span>
+                      )}
                     </td>
                     <td className="p-3 text-slate-400 text-sm text-right">
                       {ep.duration ? (
