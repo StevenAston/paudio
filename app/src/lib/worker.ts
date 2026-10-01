@@ -92,6 +92,8 @@ export async function processNextDownload() {
         const ytArgs = [
           "-x", "--audio-format", "mp3",
           "-f", formatArg,
+          // Polite pacing so queued jobs don't trip YouTube's 429s; a few seconds is nothing next to Whisper's minutes
+          "--limit-rate", "500K", "--sleep-interval", "8", "--sleep-requests", "8", "--sleep-subtitles", "8",
           "-o", audioPath,
           job.episode.audioUrl
         ]
