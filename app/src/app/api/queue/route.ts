@@ -21,33 +21,41 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { episodeIds } = await request.json()
+    const body = await request.json()
+    const episodeIds = body.episodeIds
+    const type = body.type || "DOWNLOAD_AND_TRANSCRIBE"
+    
     if (!episodeIds || !Array.isArray(episodeIds)) {
       return NextResponse.json({ error: "episodeIds array is required" }, { status: 400 })
     }
 
     const jobs = []
     for (const episodeId of episodeIds) {
+      const initialProgress = type === "TRANSCRIBE_ONLY" ? 50.0 : 0.0;
+
       // Upsert job to avoid duplicates
       const job = await prisma.jobQueue.upsert({
         where: { episodeId },
         update: {
           status: "PENDING",
-          progress: 0,
+          progress: initialProgress,
+          type,
         },
         create: {
           episodeId,
-          type: "DOWNLOAD_AND_TRANSCRIBE",
+          type,
           status: "PENDING",
+          progress: initialProgress,
         },
       })
       
+      const updateData: any = {}
+      if (type !== "TRANSCRIBE_ONLY") updateData.downloadStatus = "PENDING"
+      if (type !== "DOWNLOAD_ONLY") updateData.transcribeStatus = "PENDING"
+      
       await prisma.episode.update({
         where: { id: episodeId },
-        data: {
-          downloadStatus: "PENDING",
-          transcribeStatus: "PENDING",
-        }
+        data: updateData
       })
       jobs.push(job)
     }

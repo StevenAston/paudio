@@ -3,11 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 5600 -H 0.0.0.0 --webpack",
+    "dev": "next dev -p 3033 -H 0.0.0.0 --webpack",
     "build": "next build",
-    "start": "next start -p 5600",
-    "lint": "eslint",
-    "test": "jest"
+    "start": "next start -p 3033",
+    "lint": "eslint"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.8.0",
@@ -20,21 +19,15 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "rss-parser": "latest",
-    "tailwind-merge": "latest",
-    "wavesurfer.js": "^8.0.1"
+    "tailwind-merge": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@testing-library/jest-dom": "^7.0.1",
-    "@testing-library/react": "^16.3.3",
-    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
-    "jest": "^30.5.2",
-    "jest-environment-jsdom": "^30.5.2",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "typescript": "^5"

@@ -10,3 +10,5 @@ transcripts
 *.tmp
 .env
 app/.env
+*.tar
+.git

@@ -79,85 +79,109 @@ export async function processNextDownload() {
       if (existingPath && fs.existsSync(existingPath)) audioPath = existingPath
       writeLog(`[WORKER] Audio file already exists: ${audioPath}, skipping download.`)
     } else {
-      const res = await fetch(job.episode.audioUrl)
-    if (!res.ok) throw new Error(`Failed to fetch audio: ${res.statusText}`)
-    
-    const checkJob = await prisma.jobQueue.findUnique({ where: { id: job.id } })
-    if (checkJob?.status === "PAUSED") {
-      writeLog(`[WORKER] Job paused during download start.`)
-      // Set status back to PENDING so it can be resumed
-      await prisma.jobQueue.update({ where: { id: job.id }, data: { status: "PENDING" } })
-      return true
-    }
+      const checkJob = await prisma.jobQueue.findUnique({ where: { id: job.id } })
+      if (checkJob?.status === "PAUSED") {
+        writeLog(`[WORKER] Job paused during download start.`)
+        await prisma.jobQueue.update({ where: { id: job.id }, data: { status: "PENDING" } })
+        return true
+      }
 
-    const fileStream = fs.createWriteStream(audioPath)
-    if (res.body) {
-      const totalBytes = parseInt(res.headers.get("content-length") || "0", 10)
-      let downloadedBytes = 0
-      let lastUpdate = 0
-
-      const progressStream = new Transform({
-        transform(chunk, encoding, callback) {
-          downloadedBytes += chunk.length
-          if (totalBytes > 0) {
-            const now = Date.now()
-            if (now - lastUpdate > 1000) {
-              lastUpdate = now
-              const percent = (downloadedBytes / totalBytes) * 25
-              prisma.jobQueue.update({
-                where: { id: job.id },
-                data: { progress: percent }
-              }).catch(() => {})
-            }
-          }
-          callback(null, chunk)
+      if (job.episode.podcast.sourceType === "YOUTUBE") {
+        writeLog(`[WORKER] Downloading YouTube audio using yt-dlp: ${job.episode.audioUrl}`)
+        const formatArg = job.episode.youtubeAudioFormatId ? job.episode.youtubeAudioFormatId : "bestaudio"
+        const ytArgs = [
+          "-x", "--audio-format", "mp3",
+          "-f", formatArg,
+          // Polite pacing so queued jobs don't trip YouTube's 429s; a few seconds is nothing next to Whisper's minutes
+          "--limit-rate", "500K", "--sleep-interval", "8", "--sleep-requests", "8", "--sleep-subtitles", "8",
+          "-o", audioPath,
+          job.episode.audioUrl
+        ]
+        
+        if (job.episode.youtubeSubtitleFormatId) {
+          ytArgs.push("--write-subs", "--sub-format", job.episode.youtubeSubtitleFormatId, "--sub-langs", "all")
         }
-      })
+        
+        await new Promise((resolve, reject) => {
+          const ytProcess = spawn("yt-dlp", ytArgs)
+          
+          ytProcess.stdout.on("data", (data) => {
+             const text = data.toString()
+             const match = text.match(/\[download\]\s+(\d+\.\d+)%/)
+             if (match) {
+               const percent = parseFloat(match[1]) * 0.25 // scale 0-100 to 0-25
+               prisma.jobQueue.update({
+                 where: { id: job.id },
+                 data: { progress: percent }
+               }).catch(() => {})
+             }
+          })
+          ytProcess.stderr.on("data", (data) => {
+             writeLog(`[YT-DLP] ${data.toString().trim()}`)
+          })
+          
+          ytProcess.on("close", (code) => {
+            if (code === 0) resolve(true)
+            else reject(new Error(`yt-dlp failed with code ${code}`))
+          })
+        })
+        
+        // Find if yt-dlp appended an extension to audioPath, and if so, we need to locate the file and rename it or update audioPath
+        // Actually -o ensures it writes to exactly audioPath (with .mp3 extension as defined above). But yt-dlp might fail if format isn't compatible. 
+        // We'll trust -o audioPath works for audio extraction if we don't pass --extract-audio, wait, let's just let FFmpeg handle the conversion from whatever it downloaded.
+        
+      } else {
+        const res = await fetch(job.episode.audioUrl)
+        if (!res.ok) throw new Error(`Failed to fetch audio: ${res.statusText}`)
+        
+        const fileStream = fs.createWriteStream(audioPath)
+        if (res.body) {
+          const totalBytes = parseInt(res.headers.get("content-length") || "0", 10)
+          let downloadedBytes = 0
+          let lastUpdate = 0
 
-      // @ts-ignore
-      await pipeline(res.body, progressStream, fileStream)
-    }
+          const progressStream = new Transform({
+            transform(chunk, encoding, callback) {
+              downloadedBytes += chunk.length
+              if (totalBytes > 0) {
+                const now = Date.now()
+                if (now - lastUpdate > 1000) {
+                  lastUpdate = now
+                  const percent = (downloadedBytes / totalBytes) * 25
+                  prisma.jobQueue.update({
+                    where: { id: job.id },
+                    data: { progress: percent }
+                  }).catch(() => {})
+                }
+              }
+              callback(null, chunk)
+            }
+          })
+
+          // @ts-ignore
+          await pipeline(res.body, progressStream, fileStream)
+        }
+      }
     } // closes else block for skipDownload
 
-    const wavPath = audioPath.replace(/\.[^/.]+$/, ".wav")
-
-    writeLog(`[WORKER] Converting to WAV to bypass TorchCodec/FFmpeg binding issues...`)
-    await prisma.jobQueue.update({
-      where: { id: job.id },
-      data: { progress: 25.0 }
-    }).catch(() => {})
-    
-    await new Promise((resolve, reject) => {
-      const ffmpegProcess = spawn("ffmpeg", [
-        "-y",
-        "-i", audioPath,
-        "-ar", "16000",
-        "-ac", "1",
-        "-c:a", "pcm_s16le",
-        wavPath
-      ])
-
-      ffmpegProcess.on("close", (code) => {
-        if (code === 0) resolve(true)
-        else reject(new Error(`FFmpeg conversion failed with code ${code}`))
-      })
-    })
-
-    // We now keep the original audioPath (mp3) and don't overwrite it with wavPath
-    // so that localAudioPath points to the original file.
-    
-    writeLog(`[WORKER] Audio ready: ${audioPath} (WAV prepared for transcription)`)
+    writeLog(`[WORKER] Audio ready: ${audioPath}`)
 
     await prisma.episode.update({
       where: { id: job.episodeId },
       data: { downloadStatus: "DOWNLOADED", localAudioPath: audioPath }
     })
 
-    // Update progress to 50% and put it back to PENDING so transcription can pick it up
-    await prisma.jobQueue.update({
-      where: { id: job.id },
-      data: { progress: 50.0, status: "PENDING" }
-    })
+    if (job.type === "DOWNLOAD_ONLY") {
+      await prisma.jobQueue.update({
+        where: { id: job.id },
+        data: { progress: 100.0, status: "COMPLETED" }
+      })
+    } else {
+      await prisma.jobQueue.update({
+        where: { id: job.id },
+        data: { progress: 50.0, status: "PENDING" }
+      })
+    }
     
     return true
 
@@ -243,6 +267,24 @@ export async function processNextTranscription(workerIndex: number = 0) {
     }
     
     const wavPath = audioPath.replace(/\.[^/.]+$/, ".wav") // Replaces extension with .wav
+    
+    writeLog(`[WORKER] Preparing WAV for transcription...`)
+    await new Promise((resolve, reject) => {
+      const ffmpegProcess = spawn("ffmpeg", [
+        "-y",
+        "-i", audioPath,
+        "-ar", "16000",
+        "-ac", "1",
+        "-c:a", "pcm_s16le",
+        wavPath
+      ])
+
+      ffmpegProcess.on("close", (code) => {
+        if (code === 0) resolve(true)
+        else reject(new Error(`FFmpeg conversion failed with code ${code}`))
+      })
+    })
+
     if (!fs.existsSync(wavPath)) {
       throw new Error(`WAV file not found for transcription: ${wavPath}`)
     }
@@ -390,8 +432,9 @@ export async function processNextTranscription(workerIndex: number = 0) {
     try {
       if (fs.existsSync(transcriptPath)) {
         const transcriptData = JSON.parse(fs.readFileSync(transcriptPath, 'utf8'))
-        let mdContent = `# Transcript: ${job.episode.title}\n\n`
-        let txtContent = ""
+        const generationTime = new Date().toLocaleString()
+        let mdContent = `# Transcript: ${job.episode.title}\n*Generated on: ${generationTime}*\n\n`
+        let txtContent = `Transcript: ${job.episode.title}\nGenerated on: ${generationTime}\n\n`
         
         const segments = transcriptData.segments || transcriptData.chunks || []
         

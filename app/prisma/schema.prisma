@@ -31,35 +31,41 @@ model Settings {
 }
 
 model Podcast {
-  id             String    @id @default(uuid())
-  title          String
-  customTitle    String?
-  description    String?
-  feedUrl        String    @unique
-  coverImageUrl  String?
-  namingTemplate String?   // Stretch goal: regex/wildcard per podcast
-  episodes       Episode[]
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  title            String
+  customTitle      String?
+  description      String?
+  feedUrl          String    @unique
+  coverImageUrl    String?
+  namingTemplate   String?   // Stretch goal: regex/wildcard per podcast
+  sourceType       String    @default("RSS") // "RSS" or "YOUTUBE"
+  youtubeChannelId String?
+  episodes         Episode[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model Episode {
-  id                  String    @id @default(uuid())
-  guid                String    @unique
-  episodeNumber       String?
-  title               String
-  duration            Int?      // in seconds
-  audioUrl            String
-  publishDate         DateTime?
-  podcastId           String
-  podcast             Podcast   @relation(fields: [podcastId], references: [id], onDelete: Cascade)
-  downloadStatus      String    @default("UNPROCESSED") // UNPROCESSED, PENDING, DOWNLOADING, DOWNLOADED, ERROR
-  transcribeStatus    String    @default("UNPROCESSED") // UNPROCESSED, PENDING, TRANSCRIBING, TRANSCRIBED, ERROR
-  localAudioPath      String?
-  localTranscriptPath String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  jobQueue            JobQueue?
+  id                      String    @id @default(uuid())
+  guid                    String    @unique
+  episodeNumber           String?
+  title                   String
+  duration                Int?      // in seconds
+  audioUrl                String
+  publishDate             DateTime?
+  podcastId               String
+  podcast                 Podcast   @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  downloadStatus          String    @default("UNPROCESSED") // UNPROCESSED, PENDING, DOWNLOADING, DOWNLOADED, ERROR
+  transcribeStatus        String    @default("UNPROCESSED") // UNPROCESSED, PENDING, TRANSCRIBING, TRANSCRIBED, ERROR
+  localAudioPath          String?
+  localTranscriptPath     String?
+  youtubeVideoId          String?
+  youtubeAudioFormatId    String?
+  youtubeSubtitleFormatId String?
+  pinned                  Boolean   @default(false)
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  jobQueue                JobQueue?
 }
 
 model JobQueue {

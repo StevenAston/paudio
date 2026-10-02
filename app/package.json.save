@@ -1,0 +1,35 @@
+{
+  "name": "app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 0.0.0.0 --webpack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "latest",
+    "@prisma/client": "latest",
+    "better-sqlite3": "latest",
+    "clsx": "latest",
+    "dotenv": "latest",
+    "lucide-react": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "rss-parser": "latest",
+    "tailwind-merge": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "prisma": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest"
+  }
+}
